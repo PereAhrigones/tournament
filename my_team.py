@@ -33,7 +33,7 @@ from util import nearest_point
 #################
 
 def create_team(first_index, second_index, is_red,
-                first='una polla', second='ReflexCapotraa mastureAgent', num_training=0):
+                first='OffensiveReflexAgent', second='DefensiveReflexAgent', num_training=0):
     """
     This function should return a list of two agents that will form the
     team, initialized using firstIndex and secondIndex as their agent
@@ -54,61 +54,6 @@ def create_team(first_index, second_index, is_red,
 ##########
 # Agents #
 ##########
-class AlphaBetaAgent(CaptureAgent):
-    def get_action(self, game_state):
-        """
-        Returns the minimax action using self.depth and self.evaluation_function.
-        This function initiates the alpha-beta pruning process.
-        """
-        # Start the alpha-beta pruning process with initial alpha and beta values
-        return self.max_value(game_state, 3, -float("inf"), float("inf"))[0]
-    
-    def max_value(self, game_state, depth, alpha, beta):
-        """
-        Returns the maximum value for the current game state.
-        This function is called for the maximizing player (Pacman).
-        """
-        # Check if the search has reached the maximum depth or if the game is over
-        if depth == self.depth or game_state.is_win() or game_state.is_lose():
-            return None, self.evaluation_function(game_state)
-        
-        max_value = -float("inf")
-        max_action = None
-
-        # Iterate over all legal actions for the maximizing player
-        for action in game_state.get_legal_actions(0):
-            successor = game_state.generate_successor(0, action)
-            # Call min_value for the minimizing player (ghosts)
-            _, value = self.min_value(successor, depth, 1, alpha, beta)
-            if value > max_value:
-                max_value = value
-                max_action = action
-            # Alpha-Beta pruning so
-            if max_value > beta:
-                return max_action, max_value
-            alpha = max(alpha, max_value)
-        
-        return max_action, max_value
-    
-    def min_value(self, game_state, depth, agent, alpha, beta):
-        if depth == self.depth or game_state.is_win() or game_state.is_lose():
-            return None, self.evaluation_function(game_state)
-        min_value = float("inf")
-        min_action = None
-        for action in game_state.get_legal_actions(agent):
-            successor = game_state.generate_successor(agent, action)
-            if agent == game_state.get_num_agents() - 1:
-                _, value = self.max_value(successor, depth + 1, alpha, beta)
-            else:
-                _, value = self.min_value(successor, depth, agent + 1, alpha, beta)
-            if value < min_value:
-                min_value = value
-                min_action = action
-            if min_value < alpha:
-                return min_action, min_value
-            beta = min(beta, min_value)
-        return min_action, min_value
-
 
 class ReflexCaptureAgent(CaptureAgent):
     """
@@ -121,6 +66,8 @@ class ReflexCaptureAgent(CaptureAgent):
 
     def register_initial_state(self, game_state):
         self.start = game_state.get_agent_position(self.index)
+        self.food_start = len(self.get_food(game_state).as_list())
+        self.factor = 1.5
         CaptureAgent.register_initial_state(self, game_state)
 
     def choose_action(self, game_state):
@@ -150,6 +97,7 @@ class ReflexCaptureAgent(CaptureAgent):
                     best_action = action
                     best_dist = dist
             return best_action
+        
 
         return random.choice(best_actions)
 
@@ -190,4 +138,107 @@ class ReflexCaptureAgent(CaptureAgent):
         return {'successor_score': 1.0}
 
 
+class OffensiveReflexAgent(ReflexCaptureAgent):
+    """
+  A reflex agent that seeks food. This is an agent
+  we give you to get an idea of what an offensive agent might look like,
+  but it is by no means the best or only way to build an offensive agent.
+  """
+    def choose_action(self, game_state):
+        """
+        Picks among the actions with the highest Q(s,a).
+        """
+        actions = game_state.get_legal_actions(self.index)
 
+        # You can profile your evaluation time by uncommenting these lines
+        # start = time.time()
+        values = [self.evaluate(game_state, a) for a in actions]
+        # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
+
+        max_value = max(values)
+        best_actions = [a for a, v in zip(actions, values) if v == max_value]
+
+        food_left = len(self.get_food(game_state).as_list())
+
+        if food_left <= 2:
+            best_dist = 9999
+            best_action = None
+            for action in actions:
+                successor = self.get_successor(game_state, action)
+                pos2 = successor.get_agent_position(self.index)
+                dist = self.get_maze_distance(self.start, pos2)
+                if dist < best_dist:
+                    best_action = action
+                    best_dist = dist
+            return best_action
+        
+        if food_left <= self.food_start / self.factor:
+            best_dist = 9999
+            best_action = None
+            for action in actions:
+                successor = self.get_successor(game_state, action)
+                pos2 = successor.get_agent_position(self.index)
+                dist = self.get_maze_distance(self.start, pos2)
+                if not game_state.get_agent_state(self.index).is_pacman:
+                    self.food_start = food_left
+                    self.factor += 0.25
+                if dist < best_dist:
+                    best_action = action
+                    best_dist = dist
+            return best_action
+
+        return random.choice(best_actions)
+
+    def get_features(self, game_state, action):
+        features = util.Counter()
+        successor = self.get_successor(game_state, action)
+        food_list = self.get_food(successor).as_list()
+        features['successor_score'] = -len(food_list)  # self.get_score(successor)
+
+        # Compute distance to the nearest food
+
+        if len(food_list) > 0:  # This should always be True,  but better safe than sorry
+            my_pos = successor.get_agent_state(self.index).get_position()
+            min_distance = min([self.get_maze_distance(my_pos, food) for food in food_list])
+            features['distance_to_food'] = min_distance
+        return features
+
+    def get_weights(self, game_state, action):
+        return {'successor_score': 100, 'distance_to_food': -1}
+
+
+class DefensiveReflexAgent(ReflexCaptureAgent):
+    """
+    A reflex agent that keeps its side Pacman-free. Again,
+    this is to give you an idea of what a defensive agent
+    could be like.  It is not the best or only way to make
+    such an agent.
+    """
+
+    def get_features(self, game_state, action):
+        features = util.Counter()
+        successor = self.get_successor(game_state, action)
+
+        my_state = successor.get_agent_state(self.index)
+        my_pos = my_state.get_position()
+
+        # Computes whether we're on defense (1) or offense (0)
+        features['on_defense'] = 1
+        if my_state.is_pacman: features['on_defense'] = 0
+
+        # Computes distance to invaders we can see
+        enemies = [successor.get_agent_state(i) for i in self.get_opponents(successor)]
+        invaders = [a for a in enemies if a.is_pacman and a.get_position() is not None]
+        features['num_invaders'] = len(invaders)
+        if len(invaders) > 0:
+            dists = [self.get_maze_distance(my_pos, a.get_position()) for a in invaders]
+            features['invader_distance'] = min(dists)
+
+        if action == Directions.STOP: features['stop'] = 1
+        rev = Directions.REVERSE[game_state.get_agent_state(self.index).configuration.direction]
+        if action == rev: features['reverse'] = 1
+
+        return features
+
+    def get_weights(self, game_state, action):
+        return {'num_invaders': -1000, 'on_defense': 100, 'invader_distance': -10, 'stop': -100, 'reverse': -2}
